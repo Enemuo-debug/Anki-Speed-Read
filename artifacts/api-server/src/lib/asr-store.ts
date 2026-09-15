@@ -2,108 +2,52 @@ import {
   createCipheriv,
   createDecipheriv,
   createHash,
-  createHmac,
   randomBytes,
-  randomUUID,
-  scryptSync,
-  timingSafeEqual,
 } from "node:crypto";
+import bcrypt from "bcryptjs";
+import jwt from "jsonwebtoken";
+import mongoose, { type HydratedDocument } from "mongoose";
+import {
+  CourseModel,
+  FlashcardModel,
+  MaterialModel,
+  MaterialTestModel,
+  StudentModel,
+  TestAttemptModel,
+  type CourseRecord,
+  type MaterialRecord,
+  type MaterialTestRecord,
+  type FlashcardRecord,
+  type StudentRecord,
+  type TestAttemptRecord,
+} from "./models";
+import { destroyAsset } from "./cloudinary";
 
-export type MaterialStatus =
-  | "uploaded"
-  | "validating"
-  | "extracting"
-  | "generating"
-  | "ready"
-  | "failed";
-export type FailureType =
-  | "scanned_pdf"
-  | "course_limit_exceeded"
-  | "generation_error"
-  | "quota_exhausted"
-  | null;
+export type MaterialStatus = "uploaded" | "validating" | "extracting" | "generating" | "ready" | "failed";
+export type FailureType = "scanned_pdf" | "course_limit_exceeded" | "generation_error" | "quota_exhausted" | null;
 
-export type Student = {
-  id: string;
-  fullName: string;
-  email: string;
-  passwordHash: string;
-  passwordSalt: string;
-  encryptedGeminiKey: string;
-};
-export type Course = {
-  id: string;
-  studentId: string;
-  title: string;
-  description: string;
-  totalPageCount: number;
-  createdAt: Date;
-};
-export type Material = {
-  id: string;
-  courseId: string;
-  originalFileName: string;
-  pageCount: number;
-  extractedCharCount: number;
-  extractedText: string;
-  status: MaterialStatus;
-  failureType: FailureType;
-  failureReason: string | null;
-  flashcardCount: number;
-  questionCount: number;
-  createdAt: Date;
-};
-export type Flashcard = {
-  id: string;
-  materialId: string;
-  courseId: string;
-  front: string;
-  back: string;
-};
-export type TestQuestion = {
-  question: string;
-  options: string[];
-  correctIndex: number;
-  explanation: string;
-};
-export type MaterialTest = {
-  id: string;
-  materialId: string;
-  courseId: string;
-  materialName: string;
-  questions: TestQuestion[];
-};
-export type TestAttempt = {
-  id: string;
-  studentId: string;
-  testId: string;
-  materialName: string;
-  answers: number[];
-  score: number;
-  totalQuestions: number;
-  takenAt: Date;
-};
+export type Student = HydratedDocument<StudentRecord>;
+export type Course = HydratedDocument<CourseRecord>;
+export type Material = HydratedDocument<MaterialRecord>;
+export type Flashcard = HydratedDocument<FlashcardRecord>;
+export type MaterialTest = HydratedDocument<MaterialTestRecord>;
+export type TestAttempt = HydratedDocument<TestAttemptRecord>;
 
-const students = new Map<string, Student>();
-const courses = new Map<string, Course>();
-const materials = new Map<string, Material>();
-const flashcards = new Map<string, Flashcard>();
-const tests = new Map<string, MaterialTest>();
-const attempts = new Map<string, TestAttempt>();
+const jwtSecret = process.env.JWT_SECRET ?? process.env.SESSION_SECRET ?? "asr-development-secret";
+const encryptionKey = createHash("sha256")
+  .update(process.env.ENCRYPTION_KEY ?? process.env.SESSION_SECRET ?? "asr-development-secret")
+  .digest();
 
-const secret = process.env.SESSION_SECRET ?? "asr-development-secret";
-const encryptionKey = createHash("sha256").update(secret).digest();
-
-export function createPassword(password: string): Pick<Student, "passwordHash" | "passwordSalt"> {
-  const passwordSalt = randomBytes(16).toString("hex");
-  const passwordHash = scryptSync(password, passwordSalt, 64).toString("hex");
-  return { passwordHash, passwordSalt };
+function isValidId(value: string): boolean {
+  return mongoose.isValidObjectId(value);
 }
 
-export function verifyPassword(student: Student, password: string): boolean {
-  const actual = scryptSync(password, student.passwordSalt, 64);
-  const expected = Buffer.from(student.passwordHash, "hex");
-  return actual.length === expected.length && timingSafeEqual(actual, expected);
+export async function createPassword(password: string): Promise<string> {
+  return bcrypt.hash(password, 12);
+}
+
+export async function verifyPassword(student: Student, password: string): Promise<boolean> {
+  return bcrypt.compare(password, student.passwordHash);
 }
 
 export function encryptGeminiKey(value: string): string {
@@ -124,158 +68,248 @@ export function decryptGeminiKey(value: string): string {
 }
 
 export function createToken(studentId: string): string {
-  const payload = Buffer.from(JSON.stringify({ sub: studentId, exp: Date.now() + 1000 * 60 * 60 * 24 * 14 })).toString("base64url");
-  const signature = createHmac("sha256", secret).update(payload).digest("base64url");
-  return `${payload}.${signature}`;
+  return jwt.sign({}, jwtSecret, { subject: studentId, expiresIn: "14d" });
 }
 
 export function verifyToken(token: string): string | null {
-  const [payload, signature] = token.split(".");
-  if (!payload || !signature) return null;
-  const expected = createHmac("sha256", secret).update(payload).digest("base64url");
-  if (signature.length !== expected.length || !timingSafeEqual(Buffer.from(signature), Buffer.from(expected))) return null;
   try {
-    const parsed = JSON.parse(Buffer.from(payload, "base64url").toString("utf8")) as { sub?: string; exp?: number };
-    return parsed.exp && parsed.exp > Date.now() && parsed.sub ? parsed.sub : null;
+    const payload = jwt.verify(token, jwtSecret) as jwt.JwtPayload;
+    return typeof payload.sub === "string" && payload.sub ? payload.sub : null;
   } catch {
     return null;
   }
 }
 
 export function studentView(student: Student) {
-  return { id: student.id, fullName: student.fullName, email: student.email, hasGeminiKey: Boolean(student.encryptedGeminiKey) };
+  return {
+    id: student.id,
+    fullName: student.fullName,
+    email: student.email,
+    hasGeminiKey: Boolean(student.encryptedGeminiKey),
+  };
 }
 
-export function findStudentByEmail(email: string) {
-  return [...students.values()].find((student) => student.email.toLowerCase() === email.toLowerCase());
+export async function findStudentByEmail(email: string): Promise<Student | null> {
+  return StudentModel.findOne({ email: email.toLowerCase() }).exec();
 }
 
-export function getStudent(id: string) {
-  return students.get(id);
+export async function getStudent(id: string): Promise<Student | null> {
+  if (!isValidId(id)) return null;
+  return StudentModel.findById(id).exec();
 }
 
-export function addStudent(input: { fullName: string; email: string; password: string; geminiApiKey: string }) {
-  const password = createPassword(input.password);
-  const student: Student = {
-    id: randomUUID(),
+export async function addStudent(input: { fullName: string; email: string; password: string; geminiApiKey: string }): Promise<Student> {
+  const passwordHash = await createPassword(input.password);
+  const student = await StudentModel.create({
     fullName: input.fullName,
     email: input.email.toLowerCase(),
-    ...password,
+    passwordHash,
     encryptedGeminiKey: encryptGeminiKey(input.geminiApiKey),
-  };
-  students.set(student.id, student);
+  });
   return student;
 }
 
-export function updateStudentGeminiKey(studentId: string, key: string) {
-  const student = students.get(studentId);
+export async function updateStudentGeminiKey(studentId: string, key: string): Promise<Student | null> {
+  if (!isValidId(studentId)) return null;
+  const student = await StudentModel.findById(studentId).exec();
   if (!student) return null;
   student.encryptedGeminiKey = encryptGeminiKey(key);
+  await student.save();
   return student;
 }
 
-export function listStudentCourses(studentId: string) {
-  return [...courses.values()].filter((course) => course.studentId === studentId).sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
+export async function listStudentCourses(studentId: string): Promise<Course[]> {
+  return CourseModel.find({ student: studentId }).sort({ createdAt: -1 }).exec();
 }
 
-export function addCourse(studentId: string, title: string, description = "") {
-  const course: Course = { id: randomUUID(), studentId, title, description, totalPageCount: 0, createdAt: new Date() };
-  courses.set(course.id, course);
-  return course;
+export async function addCourse(studentId: string, title: string, description = ""): Promise<Course> {
+  return CourseModel.create({ student: studentId, title, description, totalPageCount: 0 });
 }
 
-export function updateCourse(courseId: string, input: { title: string; description: string }) {
-  const course = courses.get(courseId);
+export async function updateCourse(courseId: string, input: { title: string; description: string }): Promise<Course | null> {
+  if (!isValidId(courseId)) return null;
+  const course = await CourseModel.findById(courseId).exec();
   if (!course) return null;
   course.title = input.title;
   course.description = input.description;
+  await course.save();
   return course;
 }
 
-export function getCourseForStudent(courseId: string, studentId: string) {
-  const course = courses.get(courseId);
-  return course?.studentId === studentId ? course : null;
+export async function getCourseForStudent(courseId: string, studentId: string): Promise<Course | null> {
+  if (!isValidId(courseId)) return null;
+  return CourseModel.findOne({ _id: courseId, student: studentId }).exec();
 }
 
-export function removeCourse(courseId: string) {
-  for (const material of [...materials.values()]) if (material.courseId === courseId) removeMaterial(material.id);
-  courses.delete(courseId);
+export async function adjustCoursePages(courseId: string, delta: number): Promise<void> {
+  if (!isValidId(courseId)) return;
+  await CourseModel.updateOne({ _id: courseId }, { $inc: { totalPageCount: delta } }).exec();
 }
 
-export function listCourseMaterials(courseId: string) {
-  return [...materials.values()].filter((material) => material.courseId === courseId).sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime());
+export async function removeCourse(courseId: string): Promise<void> {
+  const materials = await MaterialModel.find({ course: courseId }).select("_id").exec();
+  for (const material of materials) {
+    await removeMaterial(material._id.toString());
+  }
+  await CourseModel.deleteOne({ _id: courseId }).exec();
 }
 
-export function getMaterial(materialId: string) {
-  return materials.get(materialId);
+export async function listCourseMaterials(courseId: string): Promise<Material[]> {
+  return MaterialModel.find({ course: courseId }).sort({ createdAt: 1, _id: 1 }).exec();
 }
 
-export function getMaterialForStudent(materialId: string, studentId: string) {
-  const material = materials.get(materialId);
-  return material && getCourseForStudent(material.courseId, studentId) ? material : null;
+export async function getMaterial(materialId: string): Promise<Material | null> {
+  if (!isValidId(materialId)) return null;
+  return MaterialModel.findById(materialId).exec();
 }
 
-export function addMaterial(input: Omit<Material, "id" | "createdAt">) {
-  const material: Material = { ...input, id: randomUUID(), createdAt: new Date() };
-  materials.set(material.id, material);
-  return material;
+export async function getMaterialForStudent(materialId: string, studentId: string): Promise<Material | null> {
+  if (!isValidId(materialId)) return null;
+  const material = await MaterialModel.findById(materialId).exec();
+  if (!material) return null;
+  const owned = await CourseModel.exists({ _id: material.course, student: studentId }).exec();
+  return owned ? material : null;
 }
 
-export function removeMaterial(materialId: string) {
-  const material = materials.get(materialId);
-  if (!material) return;
-  const course = courses.get(material.courseId);
-  if (course && material.status !== "failed") course.totalPageCount = Math.max(0, course.totalPageCount - material.pageCount);
-  for (const card of [...flashcards.values()]) if (card.materialId === materialId) flashcards.delete(card.id);
-  for (const test of [...tests.values()]) if (test.materialId === materialId) tests.delete(test.id);
-  materials.delete(materialId);
-}
-
-export function addFlashcards(items: Array<Omit<Flashcard, "id">>) {
-  return items.map((item) => {
-    const card = { ...item, id: randomUUID() };
-    flashcards.set(card.id, card);
-    return card;
+export async function addMaterial(input: Omit<MaterialRecord, "course" | "cloudinaryUrl" | "cloudinaryPublicId" | "createdAt"> & { courseId: string; cloudinaryUrl?: string | null; cloudinaryPublicId?: string | null }): Promise<Material> {
+  return MaterialModel.create({
+    course: input.courseId,
+    originalFileName: input.originalFileName,
+    cloudinaryUrl: input.cloudinaryUrl ?? null,
+    cloudinaryPublicId: input.cloudinaryPublicId ?? null,
+    pageCount: input.pageCount,
+    extractedCharCount: input.extractedCharCount,
+    extractedText: input.extractedText,
+    status: input.status,
+    failureType: input.failureType ?? null,
+    failureReason: input.failureReason ?? null,
+    flashcardCount: input.flashcardCount ?? 0,
+    questionCount: input.questionCount ?? 0,
   });
 }
 
-export function listCourseFlashcards(courseId: string) {
-  return [...flashcards.values()].filter((card) => card.courseId === courseId);
+export async function removeMaterial(materialId: string): Promise<void> {
+  if (!isValidId(materialId)) return;
+  const material = await MaterialModel.findById(materialId).exec();
+  if (!material) return;
+
+  const course = await CourseModel.findById(material.course).exec();
+  if (course && material.status !== "failed") {
+    await adjustCoursePages(course._id.toString(), -material.pageCount);
+  }
+  if (material.cloudinaryPublicId) {
+    await destroyAsset(material.cloudinaryPublicId).catch(() => undefined);
+  }
+  const tests = await MaterialTestModel.find({ material: material._id }).select("_id").exec();
+  const testIds = tests.map((test) => test._id);
+  if (testIds.length > 0) {
+    await TestAttemptModel.deleteMany({ test: { $in: testIds } }).exec();
+  }
+  await FlashcardModel.deleteMany({ material: material._id }).exec();
+  await MaterialTestModel.deleteMany({ material: material._id }).exec();
+  await material.deleteOne();
 }
 
-export function addTest(input: Omit<MaterialTest, "id">) {
-  const test = { ...input, id: randomUUID() };
-  tests.set(test.id, test);
-  return test;
+export async function addFlashcards(items: Array<{ materialId: string; courseId: string; front: string; back: string }>): Promise<Flashcard[]> {
+  if (items.length === 0) return [];
+  return FlashcardModel.insertMany(
+    items.map((item) => ({
+      material: new mongoose.Types.ObjectId(item.materialId),
+      course: new mongoose.Types.ObjectId(item.courseId),
+      front: item.front,
+      back: item.back,
+    })),
+  );
 }
 
-export function getTest(testId: string) {
-  return tests.get(testId);
+export async function listCourseFlashcards(courseId: string) {
+  return FlashcardModel.find({ course: courseId })
+    .sort({ createdAt: 1, _id: 1 })
+    .exec()
+    .then((cards) =>
+      cards.map((card) => ({
+        id: card.id,
+        materialId: card.material.toString(),
+        courseId: card.course.toString(),
+        front: card.front,
+        back: card.back,
+      })),
+    );
 }
 
-export function getTestByMaterial(materialId: string) {
-  return [...tests.values()].find((test) => test.materialId === materialId);
+export async function addTest(input: { materialId: string; courseId: string; materialName: string; questions: Array<{ question: string; options: string[]; correctIndex: number; explanation: string }> }): Promise<MaterialTest> {
+  return MaterialTestModel.create({
+    material: input.materialId,
+    course: input.courseId,
+    materialName: input.materialName,
+    questions: input.questions,
+  });
 }
 
-export function addAttempt(input: Omit<TestAttempt, "id" | "takenAt">) {
-  const attempt = { ...input, id: randomUUID(), takenAt: new Date() };
-  attempts.set(attempt.id, attempt);
-  return attempt;
+export function testView(test: MaterialTest) {
+  return {
+    id: test.id,
+    materialId: test.material.toString(),
+    courseId: test.course.toString(),
+    materialName: test.materialName,
+    questions: test.questions,
+  };
 }
 
-export function listStudentAttempts(studentId: string) {
-  return [...attempts.values()].filter((attempt) => attempt.studentId === studentId).sort((a, b) => b.takenAt.getTime() - a.takenAt.getTime());
+export async function getTest(testId: string) {
+  if (!isValidId(testId)) return null;
+  const test = await MaterialTestModel.findById(testId).exec();
+  return test ? testView(test) : null;
 }
 
-export function courseSummary(course: Course) {
-  const courseMaterials = listCourseMaterials(course.id);
+export async function getTestByMaterial(materialId: string) {
+  if (!isValidId(materialId)) return null;
+  const test = await MaterialTestModel.findOne({ material: materialId }).exec();
+  return test ? testView(test) : null;
+}
+
+export function attemptView(attempt: TestAttempt) {
+  return {
+    id: attempt.id,
+    testId: attempt.test.toString(),
+    materialName: attempt.materialName,
+    score: attempt.score,
+    totalQuestions: attempt.totalQuestions,
+    takenAt: attempt.createdAt,
+  };
+}
+
+export async function addAttempt(input: Omit<TestAttemptRecord, "test" | "student" | "createdAt"> & { testId: string; studentId: string }): Promise<ReturnType<typeof attemptView>> {
+  const attempt = await TestAttemptModel.create({
+    student: new mongoose.Types.ObjectId(input.studentId),
+    test: new mongoose.Types.ObjectId(input.testId),
+    materialName: input.materialName,
+    answers: input.answers,
+    score: input.score,
+    totalQuestions: input.totalQuestions,
+  });
+  return attemptView(attempt);
+}
+
+export async function listStudentAttempts(studentId: string) {
+  return TestAttemptModel.find({ student: studentId })
+    .sort({ createdAt: -1, _id: -1 })
+    .exec()
+    .then((attempts) => attempts.map(attemptView));
+}
+
+export async function courseSummary(course: Course) {
+  const [materialCount, readyMaterialCount] = await Promise.all([
+    MaterialModel.countDocuments({ course: course._id }).exec(),
+    MaterialModel.countDocuments({ course: course._id, status: "ready" }).exec(),
+  ]);
   return {
     id: course.id,
     title: course.title,
     description: course.description,
     totalPageCount: course.totalPageCount,
-    materialCount: courseMaterials.length,
-    readyMaterialCount: courseMaterials.filter((material) => material.status === "ready").length,
+    materialCount,
+    readyMaterialCount,
     createdAt: course.createdAt,
   };
 }
@@ -283,8 +317,10 @@ export function courseSummary(course: Course) {
 export function materialView(material: Material) {
   return {
     id: material.id,
-    courseId: material.courseId,
+    courseId: material.course.toString(),
     originalFileName: material.originalFileName,
+    cloudinaryUrl: material.cloudinaryUrl,
+    cloudinaryPublicId: material.cloudinaryPublicId,
     pageCount: material.pageCount,
     extractedCharCount: material.extractedCharCount,
     status: material.status,

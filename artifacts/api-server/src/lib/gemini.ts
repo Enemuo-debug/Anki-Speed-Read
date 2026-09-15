@@ -40,6 +40,23 @@ async function callGemini(encryptedKey: string, prompt: string): Promise<string>
   }
 }
 
+export async function checkGeminiKey(rawKey: string): Promise<{ valid: boolean; message?: string }> {
+  try {
+    const response = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models?key=${encodeURIComponent(rawKey)}`,
+      { signal: AbortSignal.timeout(10_000) },
+    );
+    const raw = await response.text();
+    if (response.ok) return { valid: true };
+    if (response.status === 400 || response.status === 401 || response.status === 403 || /API key not valid|invalid.*key|permission|not authorized/i.test(raw)) {
+      return { valid: false, message: "That Gemini API key looks invalid. Double-check it at Google AI Studio (aistudio.google.com/apikey)." };
+    }
+    return { valid: true };
+  } catch {
+    return { valid: true };
+  }
+}
+
 export async function generateStudyMaterials(encryptedKey: string, fileName: string, extractedText: string) {
   const source = extractedText.slice(0, 60_000);
   const cardsText = await callGemini(encryptedKey, `You are generating study flashcards strictly from the provided text. Do not add outside facts. Return JSON only matching this schema: [{"front":"string","back":"string"}]. Generate between 15 and 40 cards depending on content density. Keep front concise and back complete. The source file is ${fileName}.\\n\\nSOURCE TEXT:\\n${source}`);

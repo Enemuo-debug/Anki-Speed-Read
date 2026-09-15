@@ -12,6 +12,10 @@ export interface Material {
   id: string;
   courseId: string;
   originalFileName: string;
+  /** @nullable */
+  cloudinaryUrl?: string | null;
+  /** @nullable */
+  cloudinaryPublicId?: string | null;
   pageCount: number;
   extractedCharCount: number;
   status: MaterialStatus;

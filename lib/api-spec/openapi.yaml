@@ -461,6 +461,8 @@ components:
         id: { type: string }
         courseId: { type: string }
         originalFileName: { type: string }
+        cloudinaryUrl: { type: ["string", "null"] }
+        cloudinaryPublicId: { type: ["string", "null"] }
         pageCount: { type: integer }
         extractedCharCount: { type: integer }
         status:

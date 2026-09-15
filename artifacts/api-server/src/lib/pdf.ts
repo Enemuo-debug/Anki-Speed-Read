@@ -1,3 +1,5 @@
+import { getDocument } from "pdfjs-dist/legacy/build/pdf.mjs";
+
 export type MultipartUpload = { fileName: string; mimeType: string; bytes: Buffer };
 
 export function parseMultipart(body: Buffer, contentType: string): MultipartUpload | null {
@@ -18,22 +20,36 @@ export function parseMultipart(body: Buffer, contentType: string): MultipartUplo
   return { fileName: fileNameMatch[1], mimeType: mimeTypeMatch?.[1].trim() ?? "application/octet-stream", bytes };
 }
 
-export function countPdfPages(bytes: Buffer): number {
-  const text = bytes.toString("latin1");
-  const pages = [...text.matchAll(/\/Type\s*\/Page\b/g)].length;
-  return Math.max(1, pages);
-}
+export type PdfAnalysis = { pageCount: number; text: string };
 
-export function extractPdfText(bytes: Buffer): string {
-  const source = bytes.toString("latin1");
-  const chunks: string[] = [];
-  for (const match of source.matchAll(/\(([^()\r\n]{2,})\)\s*T[Jj]/g)) {
-    chunks.push(match[1].replace(/\\([\\()])/g, "$1"));
+export async function analyzePdf(bytes: Buffer): Promise<PdfAnalysis> {
+  const data = new Uint8Array(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  const loadingTask = getDocument({
+    data,
+    useSystemFonts: true,
+  });
+  const doc = await loadingTask.promise;
+  try {
+    const pageCount = doc.numPages;
+    const chunks: string[] = [];
+    let total = 0;
+    for (let pageNumber = 1; pageNumber <= pageCount; pageNumber += 1) {
+      const page = await doc.getPage(pageNumber);
+      const content = await page.getTextContent();
+      let pageText = "";
+      for (const item of content.items) {
+        if ("str" in item) {
+          pageText += item.str;
+          pageText += item.hasEOL ? "\n" : " ";
+        }
+      }
+      page.cleanup();
+      chunks.push(pageText);
+      total += pageText.length;
+      if (total > 70_000) break;
+    }
+    return { pageCount, text: chunks.join("\n").trim() };
+  } finally {
+    await doc.destroy().catch(() => undefined);
   }
-  if (chunks.length > 0) return chunks.join(" ");
-  return source
-    .replace(/[^\x20-\x7E\n]/g, " ")
-    .replace(/\s+/g, " ")
-    .slice(0, 60000)
-    .trim();
 }

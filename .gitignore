@@ -44,6 +44,11 @@ Thumbs.db
 .cursor/rules/nx-rules.mdc
 .github/instructions/nx.instructions.md
 
+# Secrets — never commit API keys / connection strings
+.env
+.env.*
+!.env.example
+
 # Replit
 .cache/
 .local/

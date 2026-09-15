@@ -3,11 +3,11 @@ import { getStudent, verifyToken } from "../lib/asr-store";
 
 export type AuthenticatedRequest = Request & { studentId?: string };
 
-export function requireAuth(req: AuthenticatedRequest, res: Response, next: NextFunction): void {
+export async function requireAuth(req: AuthenticatedRequest, res: Response, next: NextFunction): Promise<void> {
   const header = req.headers.authorization;
   const token = header?.startsWith("Bearer ") ? header.slice(7) : "";
   const studentId = verifyToken(token);
-  if (!studentId || !getStudent(studentId)) {
+  if (!studentId || !(await getStudent(studentId))) {
     res.status(401).json({ error: "Please log in to continue." });
     return;
   }

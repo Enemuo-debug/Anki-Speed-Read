@@ -9,30 +9,36 @@ An AI-assisted study desk for UNN students that turns typed course PDFs into cac
 - `pnpm run typecheck` — full typecheck across all packages
 - `pnpm run build` — typecheck + build all packages
 - `pnpm --filter @workspace/api-spec run codegen` — regenerate API hooks and Zod schemas from the OpenAPI spec
-- `pnpm --filter @workspace/db run push` — push DB schema changes (dev only)
-- Required env: `SESSION_SECRET` — token signing and Gemini-key encryption
+- Required env (repo-root `.env`, gitignored): `MONGODB_URI`, `JWT_SECRET`, `ENCRYPTION_KEY`, `CLOUDINARY_CLOUD_NAME`, `CLOUDINARY_API_KEY`, `CLOUDINARY_API_SECRET`, `PORT` — see `.env.example`
 
 ## Stack
 
 - pnpm workspaces, Node.js 24, TypeScript 5.9
 - API: Express 5
-- DB: PostgreSQL + Drizzle ORM
-- Validation: Zod (`zod/v4`), `drizzle-zod`
+- DB: MongoDB Atlas + Mongoose 8
+- Validation: Zod (`zod/v4`)
+- PDF analysis: pdfjs-dist (externalized from the esbuild bundle; resolves from `api-server/node_modules` at runtime)
 - API codegen: Orval (from OpenAPI spec)
-- Build: esbuild (CJS bundle)
+- Build: esbuild (ESM bundle)
+- Web app: React + Vite + Wouter + Tailwind CSS
 - Web app: React + Vite + Wouter + Tailwind CSS
 
 ## Where things live
 
 - `lib/api-spec/openapi.yaml` — source of truth for auth, courses, materials, study, and test APIs
-- `artifacts/api-server/src/lib/asr-store.ts` — scoped student/course/material/test state for the first runnable build
-- `artifacts/api-server/src/lib/pdf.ts` — multipart PDF parsing, page counting, and text-layer extraction
+- `artifacts/api-server/src/lib/asr-store.ts` — Mongoose-backed scoped student/course/material/test state
+- `artifacts/api-server/src/lib/models.ts` — Mongoose schemas + `connectDatabase()` (8s server-selection timeout)
+- `artifacts/api-server/src/lib/pdf.ts` — multipart PDF parsing, pdfjs-dist page counting, and text-layer extraction
+- `artifacts/api-server/src/lib/cloudinary.ts` — Cloudinary PDF upload/destroy
+- `artifacts/api-server/src/lib/gemini.ts` — Gemini generation + `checkGeminiKey` validation
 - `artifacts/anki-speed-read/src/App.tsx` — routed student experience
 - `artifacts/anki-speed-read/src/index.css` — UNN-inspired study desk theme
 
 ## Architecture decisions
 
-- Gemini API keys are encrypted at rest with AES-256-GCM and never returned to the client.
+- Password hashing uses bcrypt; session tokens are signed JWTs (JWT_SECRET); Gemini API keys are encrypted at rest with AES-256-GCM (ENCRYPTION_KEY) and never returned to the client.
+- Student-entered Gemini keys are validated live against the Gemini API at signup/key-update; transient network errors are tolerated.
+- Course PDFs are stored in Cloudinary as raw assets; card/test generation still happens in the API server.
 - Processing reserves course page budget immediately, then releases it if typed-text validation fails.
 - Study cards and tests are generated once per material and read from the cached store thereafter.
 - Retry is intentionally limited to Gemini-side failure types; scanned PDFs and page-limit errors require a new upload decision.
