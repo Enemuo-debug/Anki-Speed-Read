@@ -25,6 +25,7 @@ import type {
   Course,
   CourseDetail,
   CourseInput,
+  CourseUpdate,
   ErrorResponse,
   Flashcard,
   GeminiKeyInput,
@@ -726,6 +727,95 @@ export function useGetCourse<TData = Awaited<ReturnType<typeof getCourse>>, TErr
 
 
 
+
+export const getUpdateCourseUrl = (courseId: string,) => {
+
+
+
+
+  return `/api/courses/${courseId}`
+}
+
+/**
+ * @summary Update a course
+ */
+export const updateCourse = async (courseId: string,
+    courseUpdate: CourseUpdate, options?: Parameters<typeof customFetch>[1]): Promise<Course> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return customFetch<Course>(getUpdateCourseUrl(courseId),
+  {
+    ...options,
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(courseUpdate)
+  }
+);}
+
+
+
+
+
+export const getUpdateCourseMutationKey = () => ['updateCourse'] as const;
+
+export const getUpdateCourseMutationOptions = <TError = ErrorType<ErrorResponse>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof updateCourse>>, TError,UpdateCourseMutationVariables, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof updateCourse>>, TError,UpdateCourseMutationVariables, TContext> => {
+
+const mutationKey = getUpdateCourseMutationKey();
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof updateCourse>>, UpdateCourseMutationVariables> = (props) => {
+          const {courseId,data} = props ?? {};
+
+          return  updateCourse(courseId,data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type UpdateCourseMutationResult = NonNullable<Awaited<ReturnType<typeof updateCourse>>>
+    export type UpdateCourseMutationBody = BodyType<CourseUpdate>
+    export type UpdateCourseMutationError = ErrorType<ErrorResponse>
+    export type UpdateCourseMutationVariables = {courseId: string;data: BodyType<CourseUpdate>}
+
+    /**
+ * @summary Update a course
+ */
+export const useUpdateCourse = <TError = ErrorType<ErrorResponse>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof updateCourse>>, TError,UpdateCourseMutationVariables, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof updateCourse>>,
+        TError,
+        UpdateCourseMutationVariables,
+        TContext
+      > => {
+      return useMutation(getUpdateCourseMutationOptions(options));
+    }
 
 export const getDeleteCourseUrl = (courseId: string,) => {
 

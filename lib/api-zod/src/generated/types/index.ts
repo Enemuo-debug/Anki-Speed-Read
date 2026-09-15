@@ -11,6 +11,7 @@ export * from './authResponse';
 export * from './course';
 export * from './courseDetail';
 export * from './courseInput';
+export * from './courseUpdate';
 export * from './error';
 export * from './errorResponse';
 export * from './flashcard';

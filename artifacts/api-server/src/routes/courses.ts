@@ -1,5 +1,5 @@
 import { Router, type IRouter } from "express";
-import { getCourseForStudent, addCourse, listStudentCourses, courseSummary, listCourseMaterials, removeCourse } from "../lib/asr-store";
+import { getCourseForStudent, addCourse, listStudentCourses, courseSummary, listCourseMaterials, removeCourse, updateCourse } from "../lib/asr-store";
 import { requireAuth, type AuthenticatedRequest } from "../middlewares/auth";
 
 const router: IRouter = Router();
@@ -15,6 +15,24 @@ router.post("/courses", requireAuth, (req: AuthenticatedRequest, res): void => {
     return;
   }
   res.status(201).json(courseSummary(addCourse(req.studentId!, title.trim(), typeof description === "string" ? description.trim() : "")));
+});
+
+router.patch("/courses/:courseId", requireAuth, (req: AuthenticatedRequest, res): void => {
+  const courseId = Array.isArray(req.params.courseId) ? req.params.courseId[0] : req.params.courseId;
+  const course = getCourseForStudent(courseId, req.studentId!);
+  if (!course) {
+    res.status(404).json({ error: "Course not found." });
+    return;
+  }
+  const { title, description } = req.body ?? {};
+  if (typeof title !== "string" || title.trim().length < 2) {
+    res.status(400).json({ error: "Give your course a title." });
+    return;
+  }
+  res.json(courseSummary(updateCourse(course.id, {
+    title: title.trim(),
+    description: typeof description === "string" ? description.trim() : "",
+  })!));
 });
 
 router.get("/courses/:courseId", requireAuth, (req: AuthenticatedRequest, res): void => {

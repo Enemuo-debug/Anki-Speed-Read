@@ -61,6 +61,12 @@ export interface CourseInput {
   description?: string;
 }
 
+export interface CourseUpdate {
+  /** @minLength 2 */
+  title: string;
+  description?: string;
+}
+
 export type MaterialStatus = typeof MaterialStatus[keyof typeof MaterialStatus];
 
 

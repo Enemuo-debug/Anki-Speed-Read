@@ -184,6 +184,14 @@ export function addCourse(studentId: string, title: string, description = "") {
   return course;
 }
 
+export function updateCourse(courseId: string, input: { title: string; description: string }) {
+  const course = courses.get(courseId);
+  if (!course) return null;
+  course.title = input.title;
+  course.description = input.description;
+  return course;
+}
+
 export function getCourseForStudent(courseId: string, studentId: string) {
   const course = courses.get(courseId);
   return course?.studentId === studentId ? course : null;

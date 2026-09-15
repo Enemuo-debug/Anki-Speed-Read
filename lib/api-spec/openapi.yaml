@@ -153,6 +153,30 @@ paths:
                 $ref: "#/components/schemas/CourseDetail"
         "404":
           $ref: "#/components/responses/Error"
+    patch:
+      operationId: updateCourse
+      tags: [courses]
+      summary: Update a course
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/CourseId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CourseUpdate"
+      responses:
+        "200":
+          description: Course updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Course"
+        "400":
+          $ref: "#/components/responses/Error"
+        "404":
+          $ref: "#/components/responses/Error"
     delete:
       operationId: deleteCourse
       tags: [courses]
@@ -410,6 +434,12 @@ components:
         readyMaterialCount: { type: integer }
         createdAt: { type: string, format: date-time }
     CourseInput:
+      type: object
+      required: [title]
+      properties:
+        title: { type: string, minLength: 2 }
+        description: { type: string }
+    CourseUpdate:
       type: object
       required: [title]
       properties:

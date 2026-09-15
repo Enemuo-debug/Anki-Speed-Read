@@ -166,6 +166,33 @@ export const GetCourseResponse = zod.object({
 
 
 /**
+ * @summary Update a course
+ */
+export const UpdateCourseParams = zod.object({
+  "courseId": zod.coerce.string()
+})
+
+export const updateCourseBodyTitleMin = 2;
+
+
+
+export const UpdateCourseBody = zod.object({
+  "title": zod.string().min(updateCourseBodyTitleMin),
+  "description": zod.string().optional()
+})
+
+export const UpdateCourseResponse = zod.object({
+  "id": zod.string(),
+  "title": zod.string(),
+  "description": zod.string(),
+  "totalPageCount": zod.number().int(),
+  "materialCount": zod.number().int(),
+  "readyMaterialCount": zod.number().int(),
+  "createdAt": zod.coerce.date()
+})
+
+
+/**
  * @summary Delete a course
  */
 export const DeleteCourseParams = zod.object({
