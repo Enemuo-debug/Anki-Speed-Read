@@ -33,10 +33,14 @@ export type Flashcard = HydratedDocument<FlashcardRecord>;
 export type MaterialTest = HydratedDocument<MaterialTestRecord>;
 export type TestAttempt = HydratedDocument<TestAttemptRecord>;
 
-const jwtSecret = process.env.JWT_SECRET ?? process.env.SESSION_SECRET ?? "asr-development-secret";
-const encryptionKey = createHash("sha256")
-  .update(process.env.ENCRYPTION_KEY ?? process.env.SESSION_SECRET ?? "asr-development-secret")
-  .digest();
+function jwtSecret(): string {
+  return process.env.JWT_SECRET ?? process.env.SESSION_SECRET ?? "asr-development-secret";
+}
+function encryptionKey(): Buffer {
+  return createHash("sha256")
+    .update(process.env.ENCRYPTION_KEY ?? process.env.SESSION_SECRET ?? "asr-development-secret")
+    .digest();
+}
 
 function isValidId(value: string): boolean {
   return mongoose.isValidObjectId(value);
@@ -52,14 +56,14 @@ export async function verifyPassword(student: Student, password: string): Promis
 
 export function encryptGeminiKey(value: string): string {
   const iv = randomBytes(12);
-  const cipher = createCipheriv("aes-256-gcm", encryptionKey, iv);
+  const cipher = createCipheriv("aes-256-gcm", encryptionKey(), iv);
   const encrypted = Buffer.concat([cipher.update(value, "utf8"), cipher.final()]);
   return `${iv.toString("hex")}.${cipher.getAuthTag().toString("hex")}.${encrypted.toString("hex")}`;
 }
 
 export function decryptGeminiKey(value: string): string {
   const [ivHex, tagHex, encryptedHex] = value.split(".");
-  const decipher = createDecipheriv("aes-256-gcm", encryptionKey, Buffer.from(ivHex, "hex"));
+  const decipher = createDecipheriv("aes-256-gcm", encryptionKey(), Buffer.from(ivHex, "hex"));
   decipher.setAuthTag(Buffer.from(tagHex, "hex"));
   return Buffer.concat([
     decipher.update(Buffer.from(encryptedHex, "hex")),
@@ -68,12 +72,12 @@ export function decryptGeminiKey(value: string): string {
 }
 
 export function createToken(studentId: string): string {
-  return jwt.sign({}, jwtSecret, { subject: studentId, expiresIn: "14d" });
+  return jwt.sign({}, jwtSecret(), { subject: studentId, expiresIn: "14d" });
 }
 
 export function verifyToken(token: string): string | null {
   try {
-    const payload = jwt.verify(token, jwtSecret) as jwt.JwtPayload;
+    const payload = jwt.verify(token, jwtSecret()) as jwt.JwtPayload;
     return typeof payload.sub === "string" && payload.sub ? payload.sub : null;
   } catch {
     return null;

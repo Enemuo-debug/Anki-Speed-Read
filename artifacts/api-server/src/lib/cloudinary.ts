@@ -1,13 +1,15 @@
 import { v2 as cloudinary } from "cloudinary";
 import { randomUUID } from "node:crypto";
 
-const configured = Boolean(
-  process.env.CLOUDINARY_CLOUD_NAME &&
-    process.env.CLOUDINARY_API_KEY &&
-    process.env.CLOUDINARY_API_SECRET,
-);
+export function cloudinaryConfigured(): boolean {
+  return Boolean(
+    process.env.CLOUDINARY_CLOUD_NAME &&
+      process.env.CLOUDINARY_API_KEY &&
+      process.env.CLOUDINARY_API_SECRET,
+  );
+}
 
-if (configured) {
+function applyConfig(): void {
   cloudinary.config({
     cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
     api_key: process.env.CLOUDINARY_API_KEY,
@@ -15,18 +17,15 @@ if (configured) {
   });
 }
 
-export function cloudinaryConfigured(): boolean {
-  return configured;
-}
-
 export function uploadPdfBuffer(
   buffer: Buffer,
 ): Promise<{ secureUrl: string; publicId: string }> {
-  if (!configured) {
+  if (!cloudinaryConfigured()) {
     throw new Error(
       "Cloudinary is not configured. Set CLOUDINARY_CLOUD_NAME, CLOUDINARY_API_KEY, and CLOUDINARY_API_SECRET.",
     );
   }
+  applyConfig();
   return new Promise((resolve, reject) => {
     const publicId = `asr/${randomUUID()}.pdf`;
     const stream = cloudinary.uploader.upload_stream(
@@ -52,7 +51,8 @@ export function uploadPdfBuffer(
 }
 
 export async function destroyAsset(publicId: string): Promise<void> {
-  if (!configured) return;
+  if (!cloudinaryConfigured()) return;
+  applyConfig();
   await new Promise<void>((resolve, reject) => {
     cloudinary.uploader.destroy(publicId, { resource_type: "raw" }, (error) => {
       if (error) reject(error);
