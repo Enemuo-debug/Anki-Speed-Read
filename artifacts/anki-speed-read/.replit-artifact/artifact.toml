@@ -1,0 +1,28 @@
+kind = "web"
+previewPath = "/"
+title = "Anki Speed Read"
+description = "An AI-powered study workspace for University of Nigeria Nsukka students to turn typed course PDFs into cached flashcards and mini-tests, then study and track progress."
+version = "1.0.0"
+id = "artifacts/anki-speed-read"
+router = "path"
+
+[[services]]
+name = "web"
+paths = [ "/" ]
+localPort = 22318
+
+[services.development]
+run = "pnpm --filter @workspace/anki-speed-read run dev"
+
+[services.production]
+build = [ "pnpm", "--filter", "@workspace/anki-speed-read", "run", "build" ]
+serve = "static"
+publicDir = "artifacts/anki-speed-read/dist/public"
+
+[[services.production.rewrites]]
+from = "/*"
+to = "/index.html"
+
+[services.env]
+PORT = "22318"
+BASE_PATH = "/"

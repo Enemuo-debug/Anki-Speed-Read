@@ -1,0 +1,1 @@
+- [ASR build boundaries](asr-build-boundaries.md) — keep provider adapters behind the existing API contract when adding persistent storage or live Gemini/Cloudinary services.

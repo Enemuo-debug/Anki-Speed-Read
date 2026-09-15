@@ -26,6 +26,12 @@ app.use(
   }),
 );
 app.use(cors());
+app.use(
+  express.raw({
+    type: (req) => String(req.headers["content-type"] ?? "").startsWith("multipart/form-data"),
+    limit: "12mb",
+  }),
+);
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 

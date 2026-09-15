@@ -1,0 +1,257 @@
+# Anki Speed Read (ASR) — Build Prompt
+
+Paste this whole document into Replit Agent as your project brief. It's written as a single actionable spec, phase by phase.
+
+---
+
+## 1. Project Summary
+
+Build **Anki Speed Read (ASR)**, an AI-powered study tool for University of Nigeria Nsukka (UNN) students. Students sign up, create courses, upload their own course PDFs, and the app automatically generates flashcards and mini-tests from that material using Google Gemini. Cards and tests are generated **once per PDF** and cached in the database — after that, students just study/test without re-hitting the AI.
+
+**Stack**
+- Frontend: React (Vite), React Router, Axios, TailwindCSS
+- Backend: Node.js + Express
+- Database: MongoDB (Mongoose)
+- File storage: Cloudinary (raw/PDF uploads)
+- AI: Google Gemini API (user-supplied API key, one per student)
+- Auth: JWT + bcrypt
+
+---
+
+## 2. Core Entities
+
+### Student
+```
+{
+  _id,
+  fullName,
+  email (unique),
+  passwordHash,
+  geminiApiKey (encrypted at rest, see §6, REQUIRED at signup),
+  createdAt
+}
+```
+
+### Course
+```
+{
+  _id,
+  student (ref Student),
+  title,
+  description,
+  totalPageCount,   // running sum of pageCount across all "ready"/"validating" materials in this course, capped at 30
+  createdAt
+}
+```
+
+### Material (one per uploaded PDF)
+```
+{
+  _id,
+  course (ref Course),
+  originalFileName,
+  cloudinaryUrl,
+  cloudinaryPublicId,
+  pageCount,
+  extractedCharCount,
+  status: "uploaded" | "validating" | "extracting" | "generating" | "ready" | "failed",
+  failureType: "scanned_pdf" | "course_limit_exceeded" | "generation_error" | "quota_exhausted" | null,
+  failureReason (string, nullable — the user-facing message, see §4b),
+  createdAt
+}
+```
+
+### Flashcard
+```
+{
+  _id,
+  material (ref Material),
+  course (ref Course),
+  front,     // question / prompt / term
+  back,      // answer / explanation
+  createdAt
+}
+```
+
+### Test (generated once per Material)
+```
+{
+  _id,
+  material (ref Material),
+  course (ref Course),
+  questions: [
+    {
+      question,
+      options: [String],   // 4 options, multiple choice
+      correctIndex,
+      explanation
+    }
+  ],
+  createdAt
+}
+```
+
+### TestAttempt (student's run of a Test)
+```
+{
+  _id,
+  student (ref Student),
+  test (ref Test),
+  answers: [Number],       // index chosen per question
+  score,
+  totalQuestions,
+  takenAt
+}
+```
+
+---
+
+## 3. Core User Flow
+
+1. **Sign up** — name, email, password, **and Gemini API key, all required at signup** (not deferred to later). Store the key encrypted; never return it in plaintext in any API response after that. If a student hasn't provided a working key, they simply can't create an account.
+2. **Log in** — JWT issued, stored client-side.
+3. **Create course** — title + description. `totalPageCount` starts at 0.
+4. **Upload PDF(s) to a course** →
+   - Backend does a **quick page-count check first** (before touching Cloudinary): does `course.totalPageCount + newFile.pageCount` exceed **30 pages**? If yes, reject immediately — nothing gets uploaded to Cloudinary and no storage/AI cost is incurred.
+   - If within budget: file goes to Cloudinary (resource_type: `raw`).
+   - Backend validates the file fully (§4).
+   - If valid: extract text → send to Gemini → generate flashcards + test → save to DB → mark Material `ready` → increment `course.totalPageCount`.
+   - If invalid: mark `failed` with a clear `failureType` + `failureReason`, do **not** call Gemini (save the student's credits). See §4b for exactly what the student is told.
+5. **Study mode** — study mode operates at the **course level, not per-material**: a student opens a course and studies one combined deck made up of flashcards from every `ready` material in that course. This is workable precisely because the whole course is capped at 30 pages total, so a merged deck never gets unmanageably large.
+6. **Test mode** — similarly, tests are listed per material within the course (each material still gets its own 10-question test, generated once), and the student can pick which one to take. Submits, gets scored instantly (grading is local — no AI call needed at test time), and the attempt is saved so they can see history/progress.
+
+---
+
+## 4. PDF Validation Rules (do this BEFORE calling Gemini)
+
+This is the anti-hallucination / cost-control layer. Enforce server-side, in this order:
+
+1. **File type**: must be `application/pdf`.
+2. **Course-wide page limit**: the **30-page limit applies to the whole course, cumulatively across all its PDFs** — not 30 pages per individual file. Standard A4 page counting (use the PDF's actual page count, not a character-based estimate). Before accepting a new upload, check `course.totalPageCount + newFile.pageCount <= 30`. If it would exceed 30, reject the upload outright — the file is never sent to Cloudinary or Gemini.
+3. **Typed text only (reject scanned/snapped PDFs)**:
+   - Extract text from every page using `pdf-parse` (or `pdfjs-dist`).
+   - Compute extracted characters ÷ page count.
+   - If average characters-per-page is below a threshold (suggest: **100 chars/page**), treat it as a scanned or camera-snapped PDF with no real text layer → reject. This is a hard rule: **no scanned/snapped PDFs, typed PDFs only**, no exceptions and no OCR fallback (OCR is explicitly out of scope — it risks feeding Gemini garbled/incorrect text, defeating the anti-hallucination goal).
+4. **Character cap**: cap total extracted text at a max character count before sending to Gemini — suggest **~60,000 characters** (roughly matches 30 pages of dense typed text). If extraction exceeds this, truncate and note it, rather than rejecting outright.
+5. Only after all checks pass: proceed to extraction + Gemini generation, then increment `course.totalPageCount`.
+
+Store `pageCount` and `extractedCharCount` on the Material either way, so failures are debuggable.
+
+---
+
+## 4b. Failure Messaging & Retry UX
+
+Every failure must tell the student **exactly what went wrong and exactly what to do next.** Don't show a generic "upload failed." Map each `failureType` to a specific message and a specific allowed action:
+
+| `failureType` | When it happens | Message shown to student | What the student can do |
+|---|---|---|---|
+| `course_limit_exceeded` | Upload would push the course over 30 total pages | *"This course already has X of 30 pages used. This file has Y pages, which would put you over the limit. Upload a shorter file, or remove an existing material from this course first."* | Must pick a different file, or delete an existing Material to free up page budget. **No retry button** — retrying the same file will always fail. |
+| `scanned_pdf` | Text-per-page below threshold | *"This PDF looks like a scanned or camera-snapped document with no selectable text. Only typed, text-based PDFs are supported. Please export/upload a typed version of this document."* | Must upload a **different file**. **No retry button** — the same file will always fail this check, so don't offer to re-run validation on it. |
+| `generation_error` | Gemini call failed for a transient reason (network error, malformed response, etc.) | *"Something went wrong while generating your study materials. This wasn't a problem with your file — you can safely try again."* | **Retry button** — re-runs generation on the already-validated, already-extracted text (no need to re-upload or re-validate). |
+| `quota_exhausted` | Gemini returns a quota/rate-limit/billing error | See §5's dedicated quota-exhausted handling. | **Retry button**, but the message tells them why it will keep failing until they act (see §5). |
+
+General rule: only offer a "Retry" action when the underlying problem is something Gemini-side or transient (`generation_error`, `quota_exhausted`). If the problem is about the file itself (`scanned_pdf`, `course_limit_exceeded`), don't offer retry — force a fresh upload decision instead, since retrying an unfixable file just wastes the student's time.
+
+---
+
+## 5. Gemini Integration
+
+**Important: send extracted plain text to Gemini, never the raw PDF file.** This keeps token usage predictable and avoids Gemini's own PDF-parsing variance.
+
+Use the student's own stored (decrypted server-side, in-memory only) Gemini API key for every call — this is a bring-your-own-key app, so there's no shared AI cost to the platform.
+
+### Flashcard generation prompt (server-side, not user-facing)
+Send the extracted text with a system-style instruction like:
+- "You are generating study flashcards strictly from the provided text. Do not add outside facts. Return JSON only, matching this schema: `[{ "front": string, "back": string }]`. Generate between 15 and 40 cards depending on content density. Keep 'front' concise (a question or term) and 'back' a clear, complete answer."
+
+### Test generation prompt
+Same text, separate call (or same call with two schemas — your choice, but two separate calls are easier to debug):
+- "Generate a multiple-choice test strictly from the provided text, 10 questions, 4 options each, one correct answer, plus a one-sentence explanation per question. Return JSON only matching: `[{ "question": string, "options": [string,string,string,string], "correctIndex": number, "explanation": string }]`."
+
+### Implementation notes
+- Always request JSON-only output and parse defensively (strip markdown code fences if Gemini wraps the response).
+- Wrap each Gemini call in try/catch; on failure, set Material `status: "failed"` with the error reason instead of leaving it stuck.
+- This generation should run **once**, triggered right after a successful upload+validation. Never regenerate on every study/test view — always read from Flashcard/Test collections.
+- Consider running generation as an async background job (simple approach: respond to the upload request immediately with `status: "validating"`, then update status via polling or a websocket/SSE as the pipeline progresses) so the user isn't stuck on a long-loading upload request.
+
+### Handling exhausted Gemini credits/quota (important — student-facing)
+Since every student uses their own Gemini API key, an exhausted quota or billing issue is entirely on their account, and they need to know that clearly rather than seeing a vague failure:
+
+- Detect Gemini's quota/rate-limit/billing error responses specifically (Gemini returns a recognizable error code/status for this — check the response status, e.g. HTTP 429 or a `RESOURCE_EXHAUSTED` type in the error body).
+- When detected, set `Material.failureType = "quota_exhausted"` and a message such as: *"Your Gemini API key has run out of available credits/quota, so we couldn't generate study materials for this file. Check your usage/billing at Google AI Studio, then retry once your quota resets or is topped up."*
+- Show this same messaging anywhere generation could be triggered — not just uploads, but also if you ever let a student manually trigger regeneration.
+- This should be visually distinct in the UI from a generic error (e.g., a dedicated "quota exhausted" banner/icon) since it's an account issue, not an app bug, and the fix is on the student's end, not something a retry alone will solve.
+
+---
+
+## 6. Security Notes
+
+- **Encrypt the Gemini API key at rest** (e.g., AES-256 via Node's `crypto`, with a server-side `ENCRYPTION_KEY` env var). Decrypt only in-memory when making a Gemini call.
+- Never log the API key or return it in any GET /student response.
+- Hash passwords with bcrypt (never store plaintext).
+- JWT auth middleware on all `/courses`, `/materials`, `/flashcards`, `/tests` routes — a student can only access their own courses/materials.
+- Validate Cloudinary upload signatures server-side (don't let the frontend upload directly with an unsigned open preset unless you scope it tightly).
+- Rate-limit the upload endpoint (e.g., `express-rate-limit`) — someone could otherwise spam uploads and burn through their own Gemini quota, but still worth throttling for server load.
+
+---
+
+## 7. Suggested API Endpoints
+
+```
+POST   /api/auth/signup              # requires fullName, email, password, AND geminiApiKey
+POST   /api/auth/login
+PATCH  /api/auth/gemini-key          # update the key later if it changes/rotates
+
+GET    /api/courses
+POST   /api/courses
+GET    /api/courses/:id              # include totalPageCount / 30 so UI can show remaining budget
+DELETE /api/courses/:id
+
+POST   /api/courses/:id/materials    # upload a PDF (multipart) -> page-budget check -> Cloudinary -> validate -> generate
+POST   /api/materials/:id/retry      # re-run generation only (generation_error / quota_exhausted); rejects for scanned_pdf / course_limit_exceeded
+GET    /api/courses/:id/materials
+GET    /api/materials/:id            # includes status + failureType + failureReason, for polling upload progress
+DELETE /api/materials/:id            # also decrements course.totalPageCount
+
+GET    /api/courses/:id/flashcards   # merged deck across all ready materials in the course
+GET    /api/materials/:id/test       # per-material test
+
+POST   /api/tests/:testId/attempts   # submit answers, get scored
+GET    /api/students/me/attempts     # attempt history
+```
+
+---
+
+## 8. Build Order (phases for Replit Agent)
+
+1. **Scaffold**: Express + MongoDB connection + React (Vite) frontend, basic health-check route.
+2. **Auth**: signup (name, email, password, **required Gemini key**), login, JWT middleware, key encryption.
+3. **Courses CRUD**: create/list/view/delete, scoped to logged-in student, tracking `totalPageCount`.
+4. **Material upload pipeline**: page-budget pre-check → Cloudinary upload → PDF validation (typed-text check, char cap) → status tracking with `failureType`. Get this working end-to-end with status transitions visible in the UI *before* wiring Gemini.
+5. **Gemini integration**: flashcard + test generation from extracted text, triggered on successful validation, saved to DB, including quota-exhaustion detection.
+6. **Study mode UI**: merged flashcard deck viewer (flip/next/prev) across all ready materials in a course.
+7. **Test mode UI**: per-material quiz-taking flow, instant local scoring, attempt history.
+8. **Failure/retry UI**: the §4b table implemented as real UI — distinct messages per `failureType`, retry button shown only when applicable.
+9. **Polish**: page-budget indicator on the course page (e.g., "18 / 30 pages used"), basic dashboard (courses, recent scores).
+
+---
+
+## 9. Environment Variables Checklist
+
+```
+MONGODB_URI=
+JWT_SECRET=
+ENCRYPTION_KEY=            # for encrypting student Gemini keys
+CLOUDINARY_CLOUD_NAME=
+CLOUDINARY_API_KEY=
+CLOUDINARY_API_SECRET=
+```
+(Gemini API key is NOT a server env var — it's per-student, stored encrypted in MongoDB.)
+
+---
+
+## 10. Still Worth Deciding As You Build
+
+- What happens when a student deletes a Material that freed up page budget mid-generation (race condition between delete and an in-flight Gemini call)? Simplest fix: lock deletion while `status` is `validating`/`extracting`/`generating`.
+- Whether to show the page-budget indicator ("X / 30 pages used") *before* the student picks a file, so they don't even attempt an over-budget upload.
+- Whether signup should actually **test** the Gemini key with a lightweight call before accepting it, so a bad/typo'd key is caught at signup rather than on first upload.

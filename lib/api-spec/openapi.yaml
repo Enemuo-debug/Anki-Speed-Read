@@ -3,13 +3,18 @@ info:
   # Do not change the title, if the title changes, the import paths will be broken
   title: Api
   version: 0.1.0
-  description: API specification
+  description: Anki Speed Read study workspace API
 servers:
   - url: /api
     description: Base API path
 tags:
   - name: health
     description: Health operations
+  - name: auth
+  - name: courses
+  - name: materials
+  - name: study
+  - name: tests
 paths:
   /healthz:
     get:
@@ -24,7 +29,329 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/HealthStatus"
+  /auth/signup:
+    post:
+      operationId: signup
+      tags: [auth]
+      summary: Create a student account
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SignupInput"
+      responses:
+        "201":
+          description: Account created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuthResponse"
+        "400":
+          $ref: "#/components/responses/Error"
+  /auth/login:
+    post:
+      operationId: login
+      tags: [auth]
+      summary: Log in a student
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LoginInput"
+      responses:
+        "200":
+          description: Logged in
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuthResponse"
+        "401":
+          $ref: "#/components/responses/Error"
+  /auth/me:
+    get:
+      operationId: getMe
+      tags: [auth]
+      summary: Get the current student
+      security: [{ bearerAuth: [] }]
+      responses:
+        "200":
+          description: Current student
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Student"
+        "401":
+          $ref: "#/components/responses/Error"
+  /auth/gemini-key:
+    patch:
+      operationId: updateGeminiKey
+      tags: [auth]
+      summary: Update the student's Gemini key
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/GeminiKeyInput"
+      responses:
+        "200":
+          description: Key updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Student"
+  /courses:
+    get:
+      operationId: listCourses
+      tags: [courses]
+      summary: List the student's courses
+      security: [{ bearerAuth: [] }]
+      responses:
+        "200":
+          description: Courses
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Course"
+    post:
+      operationId: createCourse
+      tags: [courses]
+      summary: Create a course
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CourseInput"
+      responses:
+        "201":
+          description: Course created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Course"
+  /courses/{courseId}:
+    get:
+      operationId: getCourse
+      tags: [courses]
+      summary: Get a course
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/CourseId"
+      responses:
+        "200":
+          description: Course details
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CourseDetail"
+        "404":
+          $ref: "#/components/responses/Error"
+    delete:
+      operationId: deleteCourse
+      tags: [courses]
+      summary: Delete a course
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/CourseId"
+      responses:
+        "204":
+          description: Course deleted
+  /courses/{courseId}/materials:
+    get:
+      operationId: listMaterials
+      tags: [materials]
+      summary: List materials in a course
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/CourseId"
+      responses:
+        "200":
+          description: Materials
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Material"
+    post:
+      operationId: uploadMaterial
+      tags: [materials]
+      summary: Upload and process a PDF
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/CourseId"
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              $ref: "#/components/schemas/MaterialUploadInput"
+      responses:
+        "202":
+          description: Processing started
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Material"
+        "400":
+          $ref: "#/components/responses/Error"
+  /materials/{materialId}:
+    get:
+      operationId: getMaterial
+      tags: [materials]
+      summary: Get material status
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/MaterialId"
+      responses:
+        "200":
+          description: Material
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Material"
+    delete:
+      operationId: deleteMaterial
+      tags: [materials]
+      summary: Delete a material
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/MaterialId"
+      responses:
+        "204":
+          description: Material deleted
+  /materials/{materialId}/retry:
+    post:
+      operationId: retryMaterial
+      tags: [materials]
+      summary: Retry study material generation
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/MaterialId"
+      responses:
+        "202":
+          description: Retry started
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Material"
+  /courses/{courseId}/flashcards:
+    get:
+      operationId: listFlashcards
+      tags: [study]
+      summary: Get the merged flashcard deck for a course
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/CourseId"
+      responses:
+        "200":
+          description: Flashcards
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Flashcard"
+  /materials/{materialId}/test:
+    get:
+      operationId: getMaterialTest
+      tags: [tests]
+      summary: Get a material test
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/MaterialId"
+      responses:
+        "200":
+          description: Material test
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MaterialTest"
+  /tests/{testId}/attempts:
+    post:
+      operationId: submitTestAttempt
+      tags: [tests]
+      summary: Submit a test attempt
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/TestId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AttemptInput"
+      responses:
+        "201":
+          description: Scored attempt
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TestAttempt"
+  /students/me/attempts:
+    get:
+      operationId: listAttempts
+      tags: [tests]
+      summary: Get recent attempts
+      security: [{ bearerAuth: [] }]
+      responses:
+        "200":
+          description: Attempts
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/TestAttempt"
+  /students/me/summary:
+    get:
+      operationId: getStudentSummary
+      tags: [study]
+      summary: Get dashboard study summary
+      security: [{ bearerAuth: [] }]
+      responses:
+        "200":
+          description: Dashboard summary
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StudentSummary"
 components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+  parameters:
+    CourseId:
+      name: courseId
+      in: path
+      required: true
+      schema: { type: string }
+    MaterialId:
+      name: materialId
+      in: path
+      required: true
+      schema: { type: string }
+    TestId:
+      name: testId
+      in: path
+      required: true
+      schema: { type: string }
+  responses:
+    Error:
+      description: Error response
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
   schemas:
     HealthStatus:
       type: object
@@ -33,4 +360,152 @@ components:
           type: string
       required:
         - status
+    Error:
+      type: object
+      properties:
+        error: { type: string }
+      required: [error]
+    Student:
+      type: object
+      required: [id, fullName, email, hasGeminiKey]
+      properties:
+        id: { type: string }
+        fullName: { type: string }
+        email: { type: string, format: email }
+        hasGeminiKey: { type: boolean }
+    SignupInput:
+      type: object
+      required: [fullName, email, password, geminiApiKey]
+      properties:
+        fullName: { type: string, minLength: 2 }
+        email: { type: string, format: email }
+        password: { type: string, minLength: 8 }
+        geminiApiKey: { type: string, minLength: 10 }
+    LoginInput:
+      type: object
+      required: [email, password]
+      properties:
+        email: { type: string, format: email }
+        password: { type: string }
+    GeminiKeyInput:
+      type: object
+      required: [geminiApiKey]
+      properties:
+        geminiApiKey: { type: string, minLength: 10 }
+    AuthResponse:
+      type: object
+      required: [token, student]
+      properties:
+        token: { type: string }
+        student: { $ref: "#/components/schemas/Student" }
+    Course:
+      type: object
+      required: [id, title, description, totalPageCount, materialCount, readyMaterialCount, createdAt]
+      properties:
+        id: { type: string }
+        title: { type: string }
+        description: { type: string }
+        totalPageCount: { type: integer }
+        materialCount: { type: integer }
+        readyMaterialCount: { type: integer }
+        createdAt: { type: string, format: date-time }
+    CourseInput:
+      type: object
+      required: [title]
+      properties:
+        title: { type: string, minLength: 2 }
+        description: { type: string }
+    CourseDetail:
+      allOf:
+        - $ref: "#/components/schemas/Course"
+        - type: object
+          required: [materials]
+          properties:
+            materials:
+              type: array
+              items: { $ref: "#/components/schemas/Material" }
+    Material:
+      type: object
+      required: [id, courseId, originalFileName, pageCount, extractedCharCount, status, failureType, failureReason, createdAt]
+      properties:
+        id: { type: string }
+        courseId: { type: string }
+        originalFileName: { type: string }
+        pageCount: { type: integer }
+        extractedCharCount: { type: integer }
+        status:
+          type: string
+          enum: [uploaded, validating, extracting, generating, ready, failed]
+        failureType:
+          type: ["string", "null"]
+          enum: [scanned_pdf, course_limit_exceeded, generation_error, quota_exhausted, null]
+        failureReason: { type: ["string", "null"] }
+        flashcardCount: { type: integer }
+        questionCount: { type: integer }
+        createdAt: { type: string, format: date-time }
+    MaterialUploadInput:
+      type: object
+      required: [file]
+      properties:
+        file:
+          type: string
+          format: binary
+    Flashcard:
+      type: object
+      required: [id, materialId, front, back]
+      properties:
+        id: { type: string }
+        materialId: { type: string }
+        front: { type: string }
+        back: { type: string }
+    TestQuestion:
+      type: object
+      required: [question, options, correctIndex, explanation]
+      properties:
+        question: { type: string }
+        options:
+          type: array
+          minItems: 4
+          maxItems: 4
+          items: { type: string }
+        correctIndex: { type: integer }
+        explanation: { type: string }
+    MaterialTest:
+      type: object
+      required: [id, materialId, materialName, questions]
+      properties:
+        id: { type: string }
+        materialId: { type: string }
+        materialName: { type: string }
+        questions:
+          type: array
+          items: { $ref: "#/components/schemas/TestQuestion" }
+    AttemptInput:
+      type: object
+      required: [answers]
+      properties:
+        answers:
+          type: array
+          items: { type: integer }
+    TestAttempt:
+      type: object
+      required: [id, testId, materialName, score, totalQuestions, takenAt]
+      properties:
+        id: { type: string }
+        testId: { type: string }
+        materialName: { type: string }
+        score: { type: integer }
+        totalQuestions: { type: integer }
+        takenAt: { type: string, format: date-time }
+    StudentSummary:
+      type: object
+      required: [courseCount, pageCount, flashcardCount, averageScore, recentAttempts]
+      properties:
+        courseCount: { type: integer }
+        pageCount: { type: integer }
+        flashcardCount: { type: integer }
+        averageScore: { type: number }
+        recentAttempts:
+          type: array
+          items: { $ref: "#/components/schemas/TestAttempt" }
 
